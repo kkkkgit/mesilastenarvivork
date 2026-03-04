@@ -46,9 +46,9 @@ python3 kaamera.py
 ```
 
 Laeb treenitud mudeli ja avab kaamera. `SPACE` pildistab ja klassifitseerib, `Q` väljub.
-Mudelit saab vahetada vastavalt vajadusele. Kas kasutad mesilaste varianti või Yolo oma.
+Mudelit saab vahetada vastavalt vajadusele, kas kasutad mesilaste varianti (`model.pkl`) või YOLO oma (default).
 
-Reaalajas objektituvastus bounding box'idega. Tuvastab 80 erinevat objekti (inimesed, autod, loomad jne). `Q` väljub.
+YOLO reaalajas objektituvastus bounding box'idega. Tuvastab 80 erinevat objekti (inimesed, autod, loomad jne). `Q` väljub.
 
 ### 4. Inimeste segmenteerimine (YOLO + SAM2)
 
