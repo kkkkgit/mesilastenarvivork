@@ -2,36 +2,23 @@ import torch
 from torch import nn
 import urllib.request, os, zipfile
 
-# download data
-urllib.request.urlretrieve("http://linuxator.com/data/bee3.zip", "bee3.zip")
-os.makedirs("bee_new", exist_ok=True)
-
-# extract data
-with zipfile.ZipFile("bee3.zip", "r") as z:
-    z.extractall("bee_new")
-
-
-# form a ImageFolder dataset
+# --- Imports used later (moved to top for clarity) ---
 from torchvision import transforms, datasets
-# apply some flipping for augmentation
-# convert image to tensor
-data_transform = transforms.Compose([
-        transforms.Grayscale(),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor()
-    ])
-bee_dataset = datasets.ImageFolder(root='bee_new',
-                                           transform=data_transform)
-dataset_loader = torch.utils.data.DataLoader(bee_dataset,
-                                             batch_size=4, shuffle=True,
-                                             num_workers=1)
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+import requests
+from PIL import Image
+import io
 
-# define simple convolutional network
+
+# =====================================================================
+# Define the network class BEFORE the main guard
+# =====================================================================
 class BeeNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=(2,1), padding=2),
+            nn.Conv2d(1, 32, kernel_size=3, stride=(2, 1), padding=2),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2))
         self.conv2 = nn.Sequential(
@@ -39,526 +26,256 @@ class BeeNet(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2))
         self.conv3 = nn.Sequential(
-            nn.Conv2d(16, 16, kernel_size = 3, stride = 1, padding=2),
+            nn.Conv2d(16, 16, kernel_size=3, stride=1, padding=2),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2)
-        )
+            nn.MaxPool2d(kernel_size=2))
         self.fc1 = nn.Linear(16 * 23 * 76, 1000)
-        self.fc2 = nn.Linear(1000,100)
+        self.fc2 = nn.Linear(1000, 100)
         self.fc3 = nn.Linear(100, 3)
 
-    # run data through the layers
     def forward(self, data):
         out = self.conv1(data)
         out = self.conv2(out)
         out = self.conv3(out)
         out = out.reshape(out.size(0), -1)
-
         out = self.fc1(out)
         out = self.fc2(out)
-        #print(out)
         out = self.fc3(out)
-
         return out
 
-# init a model
-model = BeeNet()
-# set best available device
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# send model to device
-model.to(device)
+# =====================================================================
+# Everything below MUST be inside the main guard for macOS
+# =====================================================================
+if __name__ == '__main__':
 
-# loss function
-loss_crit = nn.CrossEntropyLoss()
-# optimizer that updates parameters
-optimiser = torch.optim.Adam(model.parameters(), lr=0.001)
+    # -----------------------------------------------------------------
+    # 1. Download and extract data
+    # -----------------------------------------------------------------
+    if not os.path.exists("bee3.zip"):
+        print("Downloading bee dataset...")
+        urllib.request.urlretrieve("http://linuxator.com/data/bee3.zip", "bee3.zip")
+    os.makedirs("bee_new", exist_ok=True)
+    with zipfile.ZipFile("bee3.zip", "r") as z:
+        z.extractall("bee_new")
 
+    # -----------------------------------------------------------------
+    # 2. Prepare dataset and dataloader
+    # -----------------------------------------------------------------
+    data_transform = transforms.Compose([
+        transforms.Grayscale(),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor()
+    ])
+    bee_dataset = datasets.ImageFolder(root='bee_new', transform=data_transform)
+    dataset_loader = torch.utils.data.DataLoader(
+        bee_dataset, batch_size=4, shuffle=True, num_workers=0  # num_workers=0 for macOS
+    )
 
+    # -----------------------------------------------------------------
+    # 3. Init model, device, loss, optimizer
+    # -----------------------------------------------------------------
+    model = BeeNet()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
 
-first_epoch = 0
-num_epoch = 20
+    loss_crit = nn.CrossEntropyLoss()
+    optimiser = torch.optim.Adam(model.parameters(), lr=0.001)
 
-for epoch in range(first_epoch, num_epoch):
-  epoch_loss = 0
-  model.train()
-  for i, (img, labels) in enumerate(dataset_loader):
-    # send to device
-    img, labels = img.to(device), labels.to(device)
+    # -----------------------------------------------------------------
+    # 4. Training loop (20 epochs)
+    # -----------------------------------------------------------------
+    num_epoch = 20
+    for epoch in range(num_epoch):
+        epoch_loss = 0
+        model.train()
+        for i, (img, labels) in enumerate(dataset_loader):
+            img, labels = img.to(device), labels.to(device)
+            optimiser.zero_grad()
+            predictions = model(img)
+            loss = loss_crit(predictions, labels)
+            epoch_loss += loss.item()
+            loss.backward()
+            optimiser.step()
 
+        epoch_loss = epoch_loss / (i + 1)
+        print(f"Loss at epoch {epoch} is {epoch_loss:.4f}")
 
+    # -----------------------------------------------------------------
+    # 5. Evaluate on training data (overfit check)
+    # -----------------------------------------------------------------
+    model.eval()
+    with torch.no_grad():
+        for img, label in dataset_loader:
+            img, label = img.to(device), label.to(device)
+            prediction = model(img)
+            print(prediction)
+            print("LABEL", label)
+            pred_class = torch.max(prediction, dim=1)
+            print("CLASS", pred_class.indices)
 
-    # clear the gradients
-    optimiser.zero_grad()
-    predictions = model(img)
-    # print out predictions and labels if you'd like to debug
-    #print("PRED:", predictions)
-    #print("LABEL", labels)
-    loss = loss_crit(predictions, labels)
+    # -----------------------------------------------------------------
+    # 6. Save and reload model
+    # -----------------------------------------------------------------
+    torch.save(model, "model.pkl")
+    my_model = torch.load("model.pkl", map_location=device, weights_only=False)
 
-    #save loss
-    epoch_loss += loss.item()
+    # -----------------------------------------------------------------
+    # 7. Show bee predictions from training data
+    # -----------------------------------------------------------------
+    bee_class_index = bee_dataset.class_to_idx['bee']
+    max_to_show = 5
+    found_count = 0
 
-    # compute gradients
-    loss.backward()
-    # update model parameters
-    optimiser.step()
+    my_model.eval()
+    with torch.no_grad():
+        for images, labels in dataset_loader:
+            images = images.to(device)
+            outputs = my_model(images)
+            probs = F.softmax(outputs, dim=1)
+            confidences, predictions = torch.max(probs, dim=1)
 
-  #print out loss
-  epoch_loss = epoch_loss/(i+1)
-  print("Loss at epoch ", epoch, " is ", epoch_loss)
-
-# set model to evaluation mode
-model.eval()
-
-# disable gradient tracking
-with torch.no_grad():
-  # test if model is able to overfit (NB! We are testing on training data)
-  for img, label in dataset_loader:
-    img, label = img.to(device), label.to(device)
-    prediction = model(img)
-    print(prediction)
-    print("LABEL", label)
-    pred_class = torch.max(prediction, dim=1)
-    print("CLASS", pred_class.indices)
-
-torch.save(model, "model.pkl")
-
-my_model = torch.load("model.pkl", map_location=device, weights_only=False)
-# prediction = my_model.forward(image_tensor)
-
-import matplotlib.pyplot as plt
-import torch.nn.functional as F
-
-# Identify bee index
-bee_class_index = bee_dataset.class_to_idx['bee']
-max_to_show = 5
-found_count = 0
-
-my_model.eval()
-with torch.no_grad():
-    for images, labels in dataset_loader:
-        images = images.to(device)
-        outputs = my_model(images)
-
-        # Convert logits to probabilities
-        probs = F.softmax(outputs, dim=1)
-        confidences, predictions = torch.max(probs, dim=1)
-
-        for i in range(images.size(0)):
-            if predictions[i] == bee_class_index:
-                found_count += 1
-                img_np = images[i].squeeze().cpu().numpy()
-                score = confidences[i].item()
-                percentage = score * 100
-
-                plt.figure(figsize=(4, 4))
-                plt.imshow(img_np, cmap='gray')
-                plt.title(f"Class: Bee | Score: {score:.4f} ({percentage:.2f}%)")
-                plt.axis('off')
-                plt.show()
-
+            for i in range(images.size(0)):
+                if predictions[i] == bee_class_index:
+                    found_count += 1
+                    img_np = images[i].squeeze().cpu().numpy()
+                    score = confidences[i].item()
+                    plt.figure(figsize=(4, 4))
+                    plt.imshow(img_np, cmap='gray')
+                    plt.title(f"Class: Bee | Score: {score:.4f} ({score*100:.2f}%)")
+                    plt.axis('off')
+                    plt.show()
+                if found_count >= max_to_show:
+                    break
             if found_count >= max_to_show:
                 break
-        if found_count >= max_to_show:
-            break
 
-"""# Task
-Download the image from "https://cdn-ifjcn.nitrocdn.com/VSJPVATxenzNJTzhEwVMsOyeLsByReHl/assets/images/optimized/rev-054c3dd/beegone.co.uk/wp-content/uploads/2024/03/Honeybee-scaled.webp", preprocess it to match the input requirements of the trained `my_model` (grayscale, resizing if necessary, and tensor conversion), and use the model to predict its class. Finally, display the image labeled with the predicted class and its confidence score.
+    # -----------------------------------------------------------------
+    # 8. Download external honeybee image and classify
+    # -----------------------------------------------------------------
+    url = "https://cdn-ifjcn.nitrocdn.com/VSJPVATxenzNJTzhEwVMsOyeLsByReHl/assets/images/optimized/rev-054c3dd/beegone.co.uk/wp-content/uploads/2024/03/Honeybee-scaled.webp"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    response = requests.get(url, headers=headers)
+    test_image = Image.open(io.BytesIO(response.content))
+    print(f"Downloaded image. Format: {test_image.format}, Size: {test_image.size}")
 
-## Download Image from URL
+    # Get training image dimensions for correct resize
+    train_img, _ = bee_dataset[0]
+    train_h, train_w = train_img.shape[1], train_img.shape[2]
+    print(f"Training image size: {train_w}x{train_h}")
 
-### Subtask:
-Download the honeybee image from the specified URL using the requests library and load it as a PIL image.
+    preprocess = transforms.Compose([
+        transforms.Resize((train_h, train_w)),
+        transforms.Grayscale(),
+        transforms.ToTensor()
+    ])
 
-**Reasoning**:
-I will import the required libraries, define the target image URL with appropriate headers, and use the requests library to download and load the honeybee image as a PIL Image object.
-"""
+    test_image_tensor = preprocess(test_image).unsqueeze(0).to(device)
 
-import requests
-from PIL import Image
-import io
-
-# Define the URL
-url = "https://cdn-ifjcn.nitrocdn.com/VSJPVATxenzNJTzhEwVMsOyeLsByReHl/assets/images/optimized/rev-054c3dd/beegone.co.uk/wp-content/uploads/2024/03/Honeybee-scaled.webp"
-
-# Define headers to avoid being blocked
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
-
-# Fetch the image and load it
-response = requests.get(url, headers=headers)
-test_image = Image.open(io.BytesIO(response.content))
-
-print(f"Successfully downloaded image. Format: {test_image.format}, Size: {test_image.size}")
-test_image
-
-"""## Preprocess and Predict
-
-### Subtask:
-Prepare the downloaded image for the model and perform a classification prediction.
-
-**Reasoning**:
-I will define the preprocessing pipeline to match the training configuration, apply it to the downloaded image, prepare the tensor for the model by adding a batch dimension and moving it to the device, and then perform inference to obtain the logits.
-"""
-
-# Define preprocessing matching the training data_transform
-preprocess = transforms.Compose([
-    transforms.Grayscale(),
-    transforms.ToTensor()
-])
-
-# Transform the image and add batch dimension
-test_image_tensor = preprocess(test_image).unsqueeze(0).to(device)
-
-# Perform prediction
-my_model.eval()
-with torch.no_grad():
-    logits = my_model(test_image_tensor)
-
-print(f"Input tensor shape: {test_image_tensor.shape}")
-print(f"Logits: {logits}")
-
-"""**Reasoning**:
-The model's fully connected layer expects a fixed input size (calculated as 27968 in training), but since the new image has a different resolution, the flattened dimension (467376) doesn't match; I will add a resize step to the preprocessing to ensure the input dimensions are consistent with the model's architecture.
-
-
-"""
-
-# The error occurs because the downloaded image has a different resolution than the training images.
-# Based on the error (27968 input features expected), we need to ensure the image is resized.
-# Training features were: 16 * 23 * 76. To get 23x76 after three poolings and a stride-2 conv,
-# the original height/width must be handled.
-# Let's resize the image to a fixed size used during training or common for this dataset.
-
-preprocess = transforms.Compose([
-    transforms.Resize((200, 600)),
-    transforms.Grayscale(),
-    transforms.ToTensor()
-])
-
-# Transform the image and add batch dimension
-test_image_tensor = preprocess(test_image).unsqueeze(0).to(device)
-
-# Perform prediction
-my_model.eval()
-with torch.no_grad():
-    try:
+    my_model.eval()
+    with torch.no_grad():
         logits = my_model(test_image_tensor)
-        print(f"Input tensor shape: {test_image_tensor.shape}")
-        print(f"Logits: {logits}")
-    except RuntimeError as e:
-        print(f"Current flattened size: {test_image_tensor.shape}")
-        print("Error: ", e)
-        print("Adjusting resize to match expected features...")
-        # If 200x600 is wrong, we can infer the size from the training data loading cell
-        # but for now, we ensure we apply a Resize to normalize the input.
 
-"""**Reasoning**:
-The previous attempts failed because the model's linear layer expects an input dimension of 27968, which corresponds to the flattened output of the convolutional layers (16 * 23 * 76). I will analyze the first sample from the training dataset to determine the exact image resolution used during training and then use that resolution to resize the test image, ensuring the input dimensions match exactly.
-
-
-"""
-
-import torch
-
-# Get one image from the training dataset to find its size
-train_img, _ = bee_dataset[0]
-train_h, train_w = train_img.shape[1], train_img.shape[2]
-print(f"Training image size: {train_w}x{train_h}")
-
-# Re-define preprocessing with the correct resize dimensions
-preprocess = transforms.Compose([
-    transforms.Resize((train_h, train_w)),
-    transforms.Grayscale(),
-    transforms.ToTensor()
-])
-
-# Transform the image and add batch dimension
-test_image_tensor = preprocess(test_image).unsqueeze(0).to(device)
-
-# Perform prediction
-my_model.eval()
-with torch.no_grad():
-    logits = my_model(test_image_tensor)
-
-print(f"Input tensor shape: {test_image_tensor.shape}")
-print(f"Logits: {logits}")
-
-"""**Reasoning**:
-The model's logits have been successfully obtained. Now I will convert these logits into a human-readable predicted class name and a confidence score using softmax, and finally display the image with these results to complete the subtask.
-
-
-"""
-
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
-
-# Get the probabilities
-probabilities = F.softmax(logits, dim=1)
-conf, pred_idx = torch.max(probabilities, dim=1)
-
-# Map index to class name
-class_names = bee_dataset.classes
-predicted_label = class_names[pred_idx.item()]
-confidence_score = conf.item()
-
-# Display the results
-plt.figure(figsize=(6, 6))
-plt.imshow(test_image)
-plt.title(f"Prediction: {predicted_label} | Confidence: {confidence_score:.4f} ({confidence_score*100:.2f}%)")
-plt.axis('off')
-plt.show()
-
-print(f"Predicted Class: {predicted_label}")
-print(f"Confidence: {confidence_score:.4f}")
-
-"""## Final Task
-
-### Subtask:
-Summarize the model's classification results for the external image.
-
-## Summary:
-
-### Q&A
-
-**What was the result of the model's classification for the external honeybee image?**
-The model classified the image as **"othr"** (Other) with a confidence score of **0.5879** (58.79%).
-
-### Data Analysis Key Findings
-
-*   **Image Acquisition**: A high-resolution WEBP image ($2560 \times 1440$) of a honeybee was successfully retrieved from an external URL and loaded into a PIL object for processing.
-*   **Preprocessing Constraints**: The trained model required specific input dimensions to match its internal architecture. It was determined that the model's fully connected layer expected exactly $27,968$ features, derived from an input resolution of $600 \times 350$ pixels.
-*   **Tensor Normalization**: The external image was successfully converted to a grayscale tensor and resized from its original dimensions to the required $350 \times 600$ format to ensure compatibility with the model's input layer.
-*   **Classification Confidence**: Despite the image being a honeybee, the model assigned it to the "othr" category with a relatively low confidence of approximately $58.79\%$, suggesting a potential discrepancy between the external image features and the training dataset distribution.
-
-### Insights or Next Steps
-
-*   **Model Calibration**: Since the honeybee was misclassified as "othr," evaluate the training data for the honeybee class to determine if it lacks variety in backgrounds, angles, or lighting conditions present in the external image.
-*   **Data Augmentation**: To improve the model's robustness and accuracy on external images, consider implementing data augmentation techniques (such as random cropping, rotation, and brightness adjustments) during the training phase.
-
-# Task
-Improve the robustness and accuracy of the `BeeNet` model by implementing data augmentation and retraining. First, visualize a grid of training images from the 'bee' class folder in the "bee_new" directory to assess the diversity of the current dataset compared to the misclassified external honeybee image from "https://cdn-ifjcn.nitrocdn.com/VSJPVATxenzNJTzhEwVMsOyeLsByReHl/assets/images/optimized/rev-054c3dd/beegone.co.uk/wp-content/uploads/2024/03/Honeybee-scaled.webp". Update the `data_transform` pipeline using `torchvision.transforms` to include `RandomRotation`, `RandomResizedCrop`, and `ColorJitter`. Re-initialize and retrain the model for 20 epochs using this augmented dataset. Finally, re-evaluate the same external honeybee image with the retrained model to determine if classification accuracy and confidence for the 'bee' class have improved, and summarize the impact of these changes.
-
-## Analyze Training Data Variety
-
-### Subtask:
-Visualize a grid of images from the 'bee' class folder in the 'bee_new' directory and compare them to the external honeybee image.
-
-**Reasoning**:
-I will visualize a grid of training images from the 'bee' class to inspect the data distribution and compare it with the external image that was misclassified.
-"""
-
-import os
-import matplotlib.pyplot as plt
-from PIL import Image
-
-# Define path to the 'bee' class folder
-bee_dir = 'bee_new/bee'
-
-# Get first 12 image filenames
-bee_files = sorted([f for f in os.listdir(bee_dir) if f.endswith(('.jpg', '.png', '.jpeg'))])[:12]
-
-# Create a 3x4 grid of subplots
-fig, axes = plt.subplots(3, 4, figsize=(12, 9))
-fig.suptitle('Training Samples: Bee Class', fontsize=16)
-
-for i, ax in enumerate(axes.flat):
-    if i < len(bee_files):
-        img_path = os.path.join(bee_dir, bee_files[i])
-        img = Image.open(img_path)
-        ax.imshow(img)
-        ax.set_title(bee_files[i])
-    ax.axis('off')
-
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.show()
-
-"""### Visual Comparison and Distribution Shift Analysis
-
-By comparing the grid of training samples from the `bee_new/bee` directory with the external honeybee image downloaded earlier, several key differences are observed:
-
-1.  **Background Complexity**: Most training images feature bees on relatively simple or uniform backgrounds (often flowers or hive frames with specific textures). The external image has a very high-resolution, potentially different depth-of-field and background context.
-2.  **Lighting and Contrast**: The training set images appear to have varying but often specific lighting conditions. The external image is professionally captured with high dynamic range and sharp contrast, which might differ from the dataset's average profile.
-3.  **Orientation and Pose**: The training samples show bees in a variety of angles, but the specific 'side-profile' or 'macro' detail of the external image might not be well-represented in the first few samples of the training set.
-4.  **Resolution**: The training images (resized to $600 \times 350$ for the model) likely contain less fine-grained detail than the $2560 \times 1440$ source image, leading to aliasing or loss of features when downsampled.
-
-These factors likely contributed to the model's initial misclassification as 'othr'.
-
-### Visual Comparison and Distribution Shift Analysis
-
-By comparing the grid of training samples from the `bee_new/bee` directory with the external honeybee image downloaded earlier, several key differences are observed:
-
-1.  **Background Complexity**: Most training images feature bees on relatively simple or uniform backgrounds (often flowers or hive frames with specific textures). The external image has a very high-resolution, potentially different depth-of-field and background context.
-2.  **Lighting and Contrast**: The training set images appear to have varying but often specific lighting conditions. The external image is professionally captured with high dynamic range and sharp contrast, which might differ from the dataset's average profile.
-3.  **Orientation and Pose**: The training samples show bees in a variety of angles, but the specific 'side-profile' or 'macro' detail of the external image might not be well-represented in the first few samples of the training set.
-4.  **Resolution**: The training images (resized to $600 \times 350$ for the model) likely contain less fine-grained detail than the $2560 \times 1440$ source image, leading to aliasing or loss of features when downsampled.
-
-These factors likely contributed to the model's initial misclassification as 'othr'.
-
-## Implement Data Augmentation
-
-### Subtask:
-Update the `data_transform` pipeline using `torchvision.transforms` to include `RandomRotation`, `RandomResizedCrop`, and `ColorJitter` to increase the model's robustness.
-
-**Reasoning**:
-I will define the new data augmentation pipeline using torchvision.transforms, ensuring it includes rotation, cropping, and color jittering while maintaining the required 350x600 resolution and grayscale format. Then, I will re-initialize the dataset and loader with these transformations.
-"""
-
-from torchvision import transforms, datasets
-
-# Define the augmented transform pipeline
-augmented_transform = transforms.Compose([
-    transforms.Resize((350, 600)),
-    transforms.RandomRotation(degrees=20),
-    transforms.RandomResizedCrop(size=(350, 600), scale=(0.8, 1.0)),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-    transforms.Grayscale(),
-    transforms.ToTensor()
-])
-
-# Re-initialize the dataset with augmented transforms
-bee_dataset = datasets.ImageFolder(root='bee_new', transform=augmented_transform)
-
-# Update the DataLoader
-dataset_loader = torch.utils.data.DataLoader(
-    bee_dataset,
-    batch_size=4,
-    shuffle=True,
-    num_workers=1
-)
-
-print(f"Dataset updated with augmentation. Number of samples: {len(bee_dataset)}")
-print(f"Classes: {bee_dataset.classes}")
-
-"""## Retrain Model with Augmentation
-
-### Subtask:
-Re-initialize BeeNet and the optimizer, then run the training loop for 20 epochs using the augmented dataset to improve feature extraction.
-
-**Reasoning**:
-I will re-initialize the model, loss function, and optimizer, then execute the training loop for 20 epochs using the augmented dataset as specified in the instructions.
-"""
-
-# Re-initialize the model
-model = BeeNet().to(device)
-
-# Re-initialize loss and optimizer
-loss_crit = nn.CrossEntropyLoss()
-optimiser = torch.optim.Adam(model.parameters(), lr=0.001)
-
-# Training loop
-num_epoch = 20
-
-print(f"Starting training on {device} for {num_epoch} epochs...")
-
-for epoch in range(num_epoch):
-    epoch_loss = 0
-    model.train()
-
-    for i, (img, labels) in enumerate(dataset_loader):
-        # Move data to device
-        img, labels = img.to(device), labels.to(device)
-
-        # Standard training steps
-        optimiser.zero_grad()
-        predictions = model(img)
-        loss = loss_crit(predictions, labels)
-
-        loss.backward()
-        optimiser.step()
-
-        epoch_loss += loss.item()
-
-    # Calculate and print average loss
-    avg_epoch_loss = epoch_loss / (i + 1)
-    print(f"Epoch [{epoch+1}/{num_epoch}] - Loss: {avg_epoch_loss:.4f}")
-
-# Update the 'my_model' reference used in subsequent steps
-my_model = model
-print('Retraining completed.')
-
-"""**Reasoning**:
-The model has been retrained with the augmented dataset. Now I need to re-evaluate the external honeybee image using the retrained model to check for improvements in classification accuracy and confidence.
-
-
-"""
-
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
-
-# Prepare the external image for the retrained model
-# We use the fixed dimensions determined earlier (350x600)
-val_preprocess = transforms.Compose([
-    transforms.Resize((350, 600)),
-    transforms.Grayscale(),
-    transforms.ToTensor()
-])
-
-test_image_tensor = val_preprocess(test_image).unsqueeze(0).to(device)
-
-# Perform inference
-my_model.eval()
-with torch.no_grad():
-    logits = my_model(test_image_tensor)
     probabilities = F.softmax(logits, dim=1)
-    confidence, pred_idx = torch.max(probabilities, dim=1)
+    conf, pred_idx = torch.max(probabilities, dim=1)
+    class_names = bee_dataset.classes
+    predicted_label = class_names[pred_idx.item()]
+    confidence_score = conf.item()
 
-# Map results
-predicted_label = bee_dataset.classes[pred_idx.item()]
-score = confidence.item()
+    plt.figure(figsize=(6, 6))
+    plt.imshow(test_image)
+    plt.title(f"Prediction: {predicted_label} | Confidence: {confidence_score:.4f} ({confidence_score*100:.2f}%)")
+    plt.axis('off')
+    plt.show()
+    print(f"Predicted Class: {predicted_label}")
+    print(f"Confidence: {confidence_score:.4f}")
 
-# Visualize
-plt.figure(figsize=(6, 6))
-plt.imshow(test_image)
-plt.title(f"Retrained Prediction: {predicted_label} | Confidence: {score:.4f} ({score*100:.2f}%)")
-plt.axis('off')
-plt.show()
+    # -----------------------------------------------------------------
+    # 9. Visualize training bee images
+    # -----------------------------------------------------------------
+    bee_dir = 'bee_new/bee'
+    bee_files = sorted([f for f in os.listdir(bee_dir) if f.endswith(('.jpg', '.png', '.jpeg'))])[:12]
 
-print(f"Predicted Class: {predicted_label}")
-print(f"Confidence Score: {score:.4f}")
+    fig, axes = plt.subplots(3, 4, figsize=(12, 9))
+    fig.suptitle('Training Samples: Bee Class', fontsize=16)
+    for i, ax in enumerate(axes.flat):
+        if i < len(bee_files):
+            img_path = os.path.join(bee_dir, bee_files[i])
+            img = Image.open(img_path)
+            ax.imshow(img)
+            ax.set_title(bee_files[i])
+        ax.axis('off')
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
 
-"""### Impact of Data Augmentation and Retraining
+    # -----------------------------------------------------------------
+    # 10. Retrain with data augmentation
+    # -----------------------------------------------------------------
+    augmented_transform = transforms.Compose([
+        transforms.Resize((350, 600)),
+        transforms.RandomRotation(degrees=20),
+        transforms.RandomResizedCrop(size=(350, 600), scale=(0.8, 1.0)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        transforms.Grayscale(),
+        transforms.ToTensor()
+    ])
 
-Following the implementation of `RandomRotation`, `RandomResizedCrop`, and `ColorJitter`, the model was retrained for 20 epochs.
+    bee_dataset = datasets.ImageFolder(root='bee_new', transform=augmented_transform)
+    dataset_loader = torch.utils.data.DataLoader(
+        bee_dataset, batch_size=4, shuffle=True, num_workers=0
+    )
+    print(f"Dataset updated with augmentation. Samples: {len(bee_dataset)}")
+    print(f"Classes: {bee_dataset.classes}")
 
-**Key Observations:**
-1. **Model Robustness**: The inclusion of spatial and color augmentations forced the model to learn more invariant features. However, the loss during training remained relatively high (starting at ~2.6 and ending at ~0.87), indicating that the simple `BeeNet` architecture may still struggle with the added complexity of the augmented dataset.
-2. **External Image Re-evaluation**: Despite the additional training, the external honeybee image was still classified as **'othr'**. Notably, the confidence in this 'othr' prediction **increased from 58.79% to 84.07%**.
-3. **Conclusion**: While the augmentations increased the model's certainty, they did not correct the misclassification in this specific instance. This suggests that the visual features of the external high-resolution image remain significantly outside the distribution captured by the current 27-sample training set, or that the model architecture requires more depth to benefit from advanced augmentation.
+    # Re-init model and retrain
+    model = BeeNet().to(device)
+    loss_crit = nn.CrossEntropyLoss()
+    optimiser = torch.optim.Adam(model.parameters(), lr=0.001)
 
-## Final Task
+    print(f"Starting augmented training on {device} for {num_epoch} epochs...")
+    for epoch in range(num_epoch):
+        epoch_loss = 0
+        model.train()
+        for i, (img, labels) in enumerate(dataset_loader):
+            img, labels = img.to(device), labels.to(device)
+            optimiser.zero_grad()
+            predictions = model(img)
+            loss = loss_crit(predictions, labels)
+            loss.backward()
+            optimiser.step()
+            epoch_loss += loss.item()
+        avg_epoch_loss = epoch_loss / (i + 1)
+        print(f"Epoch [{epoch+1}/{num_epoch}] - Loss: {avg_epoch_loss:.4f}")
 
-### Subtask:
-Summarize the improvements in model performance and the impact of data augmentation on classification accuracy.
+    my_model = model
+    print('Retraining completed.')
 
-## Summary:
+    # -----------------------------------------------------------------
+    # 11. Re-evaluate external image with retrained model
+    # -----------------------------------------------------------------
+    val_preprocess = transforms.Compose([
+        transforms.Resize((350, 600)),
+        transforms.Grayscale(),
+        transforms.ToTensor()
+    ])
 
-### Q&A
+    test_image_tensor = val_preprocess(test_image).unsqueeze(0).to(device)
 
-**Did data augmentation and retraining correct the misclassification of the external honeybee image?**
-No. While the model showed signs of learning, the external honeybee image was still classified as 'othr'.
+    my_model.eval()
+    with torch.no_grad():
+        logits = my_model(test_image_tensor)
+        probabilities = F.softmax(logits, dim=1)
+        confidence, pred_idx = torch.max(probabilities, dim=1)
 
-**How did the model's confidence change after retraining?**
-The model's confidence in its (incorrect) prediction of 'othr' increased significantly from approximately 58.79% to 84.07%.
+    predicted_label = bee_dataset.classes[pred_idx.item()]
+    score = confidence.item()
 
-**Did the training loss improve during the 20 epochs?**
-Yes, the average epoch loss decreased from 2.6672 to 0.8760, indicating that the model was successfully converging on the augmented training set.
-
----
-
-### Data Analysis Key Findings
-
-*   **Initial Analysis**: A comparison between the training set and the external image revealed significant "distribution shifts." Training images often had simple backgrounds and specific lighting, while the external image was a high-resolution, professional macro shot with complex depth-of-field.
-*   **Augmentation Strategy**: To address these gaps, a pipeline was implemented including `RandomRotation` (20 degrees), `RandomResizedCrop` (80-100% scale), and `ColorJitter` (brightness, contrast, and saturation adjustments).
-*   **Training Performance**: After 20 epochs of training with the new transformations, the training loss dropped by approximately 67% (from 2.6672 to 0.8760).
-*   **Robustness vs. Accuracy**: The augmentations made the model more "certain" of its features, but this did not translate to correct classification for the external image. The model's confidence in the 'othr' class rose by over 25 percentage points.
-
----
-
-### Insights or Next Steps
-
-*   **Dataset Expansion**: The current training set size (27 samples) is likely too small for the model to generalize to high-resolution professional photography, even with aggressive data augmentation. Future steps should include collecting more diverse "bee" samples from varied sources.
-*   **Architectural Limitations**: The simple `BeeNet` architecture may lack the depth required to extract features that are invariant to the high level of detail found in professional macro shots. Utilizing a pre-trained model (Transfer Learning) like ResNet or MobileNet could improve results.
-"""
+    plt.figure(figsize=(6, 6))
+    plt.imshow(test_image)
+    plt.title(f"Retrained Prediction: {predicted_label} | Confidence: {score:.4f} ({score*100:.2f}%)")
+    plt.axis('off')
+    plt.show()
+    print(f"Predicted Class: {predicted_label}")
+    print(f"Confidence Score: {score:.4f}")
