@@ -112,7 +112,7 @@ Meta AI SAM2 on segmenteerimismudel, mis suudab mis tahes objekti pikslitäpselt
 
 ### 4.1 Inimeste segmenteerimine (YOLO + SAM2)
 
-![Inimeste segmenteerimine](docs/segmenteerimine.png)
+![Inimeste segmenteerimine](docs/inimeste_seg.png)
 
 *Vasakul: YOLO tuvastab inimese ja SAM2 segmenteerib ta rohelise overlay'ga. Paremal: hägustatud taustaga tulemus — inimene on terav, taust on blur'itud.*
 
@@ -120,12 +120,6 @@ Meta AI SAM2 on segmenteerimismudel, mis suudab mis tahes objekti pikslitäpselt
 1. YOLO tuvastab kaamerast inimesed (bounding box)
 2. SAM2 saab box'id ja loob pikslitäpse maski
 3. Mask rakendatakse kaadris — inimene jääb teravaks, taust hägustatakse GaussianBlur'iga
-
-### 4.2 Git repositoorium
-
-![Git status](docs/git_status.png)
-
-*Projekti failid GitHubi repositooriumis. `.gitignore` hoiab suured failid (mudelid, andmestik, venv) repost väljas.*
 
 ---
 
