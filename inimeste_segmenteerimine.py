@@ -55,7 +55,8 @@ if __name__ == '__main__':
             sam_results = sam_model(frame, bboxes=person_boxes, verbose=False)
 
             # Step 3: Create output with only people (black background)
-            people_only = np.zeros_like(frame)
+            # people_only = np.zeros_like(frame)
+            people_only = cv2.GaussianBlur(frame, (51, 51), 0)
             annotated_overlay = frame.copy()
 
             if sam_results and sam_results[0].masks is not None:
