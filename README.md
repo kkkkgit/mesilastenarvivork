@@ -50,7 +50,7 @@ Mudelit saab vahetada vastavalt vajadusele, kas kasutad mesilaste varianti (`mod
 
 YOLO reaalajas objektituvastus bounding box'idega. Tuvastab 80 erinevat objekti (inimesed, autod, loomad jne). `Q` väljub.
 
-### 4. Inimeste segmenteerimine (YOLO + SAM2)
+### 3. Inimeste segmenteerimine (YOLO + SAM2)
 
 ```bash
 python3 inimeste_segmenteerimine.py
@@ -58,7 +58,7 @@ python3 inimeste_segmenteerimine.py
 
 `SPACE` tuvastab inimesed ja lõikab nad pikslitäpselt välja. Näitab kahte vaadet kõrvuti: overlay + eraldatud inimesed. Toetab ka tausta hägustamist. `C` puhastab, `Q` väljub.
 
-### 5. SAM2 interaktiivne segmenteerimine
+### 4. SAM2 interaktiivne segmenteerimine
 
 ```bash
 python3 sam2_kaamera.py
