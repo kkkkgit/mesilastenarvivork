@@ -121,6 +121,12 @@ Meta AI SAM2 on segmenteerimismudel, mis suudab mis tahes objekti pikslitäpselt
 2. SAM2 saab box'id ja loob pikslitäpse maski
 3. Mask rakendatakse kaadris — inimene jääb teravaks, taust hägustatakse GaussianBlur'iga
 
+### 4.2 Git ja terminal
+
+![Git status](docs/github.png)
+
+*Pilt faili töötamisest ja terminalist.*
+
 ---
 
 ## 5. Tehnoloogiad ja sõltuvused
