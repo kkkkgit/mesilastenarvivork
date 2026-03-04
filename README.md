@@ -46,12 +46,7 @@ python3 kaamera.py
 ```
 
 Laeb treenitud mudeli ja avab kaamera. `SPACE` pildistab ja klassifitseerib, `Q` väljub.
-
-### 3. YOLOv8 objektituvastus
-
-```bash
-python3 yolo_kaamera.py
-```
+Mudelit saab vahetada vastavalt vajadusele. Kas kasutad mesilaste varianti või Yolo oma.
 
 Reaalajas objektituvastus bounding box'idega. Tuvastab 80 erinevat objekti (inimesed, autod, loomad jne). `Q` väljub.
 
